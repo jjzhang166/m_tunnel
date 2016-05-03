@@ -20,11 +20,13 @@
 #include "m_mem.h"
 #include "m_dict.h"
 #include "m_list.h"
+#include "m_stm.h"
 #include "m_debug.h"
 
 #include "plat_time.h"
+#include "plat_thread.h"
 
-#include "utils_str.h"
+//#include "utils_str.h"
 #include "utils_misc.h"
 
 #include "tunnel_dns.h"
@@ -41,29 +43,35 @@ typedef struct {
    char domain[TUNNEL_DNS_DOMAIN_LEN];
    char addr[TUNNEL_DNS_ADDR_LEN];
    int date;
+   dns_query_callback cb;
+   void *opaque;
 } dns_entry_t;
 
 typedef struct {
-   char domain[TUNNEL_DNS_DOMAIN_LEN];
-   int domain_len;
-} block_entry_t;
-
-typedef struct {
-   char entry_path[TUNNEL_DNS_DOMAIN_LEN];
-   char block_path[TUNNEL_DNS_DOMAIN_LEN];
-   dict_t *entry_dict;          /* for speed up query */
-   lst_t *block_lst;            /* for remote DNS */
-   lock_t lock;
+   dict_t *entry_dict;          /* for speed up query, in aux */
+   stm_t *domain_stm;
 } dns_t;
 
 static dns_t g_dns;
 
+static int _dns_mthrd_func(void *opaque);
+
+static void
+_domain_stm_finalizer(void *ptr, void *ud) {
+   mm_free(ptr);
+}
+
 static dns_t* _dns(void) {
    if (g_dns.entry_dict == NULL) {
       g_dns.entry_dict = dict_create(8196);
-      g_dns.block_lst = lst_create();
+      g_dns.domain_stm = stm_create("dns_domain_cache", _domain_stm_finalizer, NULL);
+      mthrd_after(MTHRD_AUX, _dns_mthrd_func, &g_dns, 0);
    }
    return &g_dns;
+}
+
+static int _dns_date() {
+   return (int)(mtime_current() >> 20);
 }
 
 static dns_entry_t*
@@ -72,31 +80,20 @@ _dns_entry_create(const char *domain, int domain_len, const char *addr, int addr
    dns_entry_t *e = mm_malloc(sizeof(*e));
    strncpy(e->domain, domain, domain_len);
    strncpy(e->addr, addr, _MIN_OF(TUNNEL_DNS_ADDR_LEN, addr_len));
-   e->date = (int)(mtime_current() >> 20);
+   e->date = _dns_date();
    dict_set(dns->entry_dict, domain, domain_len, e);
-   _err("add dns entry [%s, %s]\n", misc_fix_str_1024(domain, domain_len), addr);
+   _err("add dns entry [%s, %s], %d\n", e->domain, e->addr, e->date);
    return e;
 }
 
-#if 0
 static void
 _dns_entry_destroy(dns_entry_t *e) {
    dns_t *dns = _dns();
-   lst_remove(dns->entry_lst, e->node);
+   dict_remove(dns->entry_dict, e->domain, strlen(e->domain));
    mm_free(e);
 }
-#endif
 
-/* description: find domain entry in list
- */
-static dns_entry_t*
-_dns_find_domain(const char *domain, int domain_len) {
-   dns_t *dns = _dns();
-   return dict_get(dns->entry_dict, domain, domain_len);
-}
-
-/* description: check valid ip addr
- */
+/* description: check valid ip addr */
 static int
 _valid_ip_addr(const char *addr, int addr_len) {
    int isValid = 1;
@@ -109,8 +106,7 @@ _valid_ip_addr(const char *addr, int addr_len) {
    return addr_len<=0 ? 0 : isValid;
 }
 
-/* description: query it from DNS server
- */
+/* description: query it from DNS server */
 static int
 _dns_addr_by_name(const char *domain, int domain_len, char *addr, int addr_len) {
 #if 1
@@ -121,7 +117,7 @@ _dns_addr_by_name(const char *domain, int domain_len, char *addr, int addr_len) 
    sa.sin_family = AF_INET;
    error = getaddrinfo(domain, "http", NULL, &result);
    if (error != 0) {
-      _err("Fail to get addr info: [%s] of %s\n", gai_strerror(error), misc_fix_str_1024(domain, domain_len));
+      _err("Fail to get addr info: [%s] of %s\n", gai_strerror(error));
       goto fail;
    }
     
@@ -130,7 +126,7 @@ _dns_addr_by_name(const char *domain, int domain_len, char *addr, int addr_len) 
    error = getnameinfo((struct sockaddr*)&sa, sizeof(sa), addr, addr_len,
                        NULL, 0, NI_NUMERICHOST);
    if (error != 0) {
-      _err("Fail to get host name info: %d of %s\n", error, misc_fix_str_1024(domain, domain_len));
+      _err("Fail to get host name info: %d\n", error);
       goto fail;
    }
 
@@ -160,121 +156,101 @@ _dns_addr_by_name(const char *domain, int domain_len, char *addr, int addr_len) 
    return _valid_ip_addr(addr, strlen(addr));
 }
 
-/* Public Interfaces 
- *
- */
-
+/* description: 2 hour to expire */
 static int
-_is_sub_domain(const char *sub_domain, int sub_len, const char *domain, int len) {
-   if (sub_len < len) {
-      return 0;
-   }
-
-   int si = sub_len - 1;
-   int di = len - 1;
-   for (; di>=0; di--, si--) {
-      if (domain[di] != sub_domain[si]) {
+_dns_entry_is_expired(dns_entry_t *e) {
+   if (e) {
+      int date = _dns_date();
+      if ((date - e->date) < 7200) {
          return 0;
       }
+      _dns_entry_destroy(e);
+   }
+   return 1;
+}
+
+int
+_dns_mthrd_func(void *opaque) {
+   dns_t *dns = (dns_t*)opaque;
+
+   if (stm_count(dns->domain_stm) <= 0) {
+      mtime_sleep(1);
+   }
+   else {
+
+      dns_entry_t *oe = stm_popf(dns->domain_stm);
+      int domain_len = strlen(oe->domain);
+
+      if ( _valid_ip_addr(oe->domain, domain_len) ) {
+         strncpy(oe->addr, oe->domain, domain_len);
+         if (oe->cb) {
+            oe->cb(oe->addr, strlen(oe->addr), oe->opaque);
+         }
+      }
+      else {
+         dns_entry_t *ne = dict_get(dns->entry_dict, oe->domain, domain_len);
+         if ( !_dns_entry_is_expired(ne) ) {
+            strcpy(oe->addr, ne->addr);
+            if (oe->cb) {
+               oe->cb(oe->addr, strlen(oe->addr), oe->opaque);
+            }
+         }
+         else {
+            char dn[TUNNEL_DNS_DOMAIN_LEN] = {0};
+            strncpy(dn, oe->domain, _MIN_OF(TUNNEL_DNS_DOMAIN_LEN, domain_len));
+
+            int addr_len = TUNNEL_DNS_ADDR_LEN;
+            int found_addr = 0;
+
+            for (int i=0; i<8; i++) {
+               int dlen = strlen(dn);
+
+               if (_dns_addr_by_name(dn, dlen, oe->addr, addr_len) > 0) {
+                  _dns_entry_create(oe->domain, domain_len, oe->addr, addr_len);
+                  found_addr = 1;
+                  break;
+               }
+
+               strncpy(dn, oe->addr, addr_len);
+               memset(oe->addr, 0, addr_len);
+            }
+
+            if (oe->cb) {
+               if (found_addr) {
+                  oe->cb(oe->addr, strlen(oe->addr), oe->opaque);
+               }
+               else {
+                  oe->cb(NULL, 0, oe->opaque);
+               }
+            }
+         }
+      }
+
+      _domain_stm_finalizer(oe, NULL);
    }
 
    return 1;
 }
 
-int
-dns_domain_is_block(const char *domain, int domain_len) {
-   if (domain && domain_len>0) {
+/* Public Interfaces 
+ */
+
+void
+dns_query_domain(const char *domain, int domain_len, dns_query_callback cb, void *opaque) {
+   if (domain && domain_len>0 && cb) {
       dns_t *dns = _dns();
-      //_err("check domain <%s>\n", misc_fix_str_1024(domain, domain_len));
-      lst_foreach(it, dns->block_lst) {
-         block_entry_t *e = lst_iter_data(it);
-         if ( _is_sub_domain(domain, domain_len, e->domain, e->domain_len) ) {
-            //_err("is sub domain %s\n", e->domain);
-            return 1;
-         }
-      }
+      dns_entry_t *e = (dns_entry_t*)mm_malloc(sizeof(*e));
+
+      strncpy(e->domain, domain, _MIN_OF(domain_len, TUNNEL_DNS_DOMAIN_LEN));
+      e->date = _dns_date();
+      e->cb = cb;
+      e->opaque = opaque;
+
+      stm_pushl(dns->domain_stm, e);
    }
-   return 0;
 }
 
-int
-dns_domain_query_ip(const char *domain, int domain_len, char *addr, int addr_len) {
-   int ret = 0;
-
-   if (domain && addr) {
-      if ( _valid_ip_addr(domain, domain_len) ) {
-         strncpy(addr, domain, domain_len);
-         return 1;
-      }
-      else {
-         dns_entry_t *e = _dns_find_domain(domain, domain_len);
-         if ( e ) {
-            strcpy(addr, e->addr);
-            return 1;
-         }
-
-         _err("dns [%s]\n", misc_fix_str_1024(domain, domain_len));
-
-         char dn[1024] = {0};
-         strncpy(dn, domain, _MIN_OF(1024, domain_len));
-
-         for (int i=0; i<8; i++) {
-            int dlen = strlen(dn);
-
-            if (_dns_addr_by_name(dn, dlen, addr, addr_len) > 0) {
-               _dns_entry_create(domain, domain_len, addr, addr_len);
-               ret = 1;
-               break;
-            }
-
-            strncpy(dn, addr, addr_len);
-            memset(addr, 0, addr_len);
-         }
-
-         if (ret <= 0) {
-            _err("fail to dns [%s]\n", domain);
-         }
-      }
-   }
-   return ret;
-}
-
-int
-dns_domain_query_ip_local(const char *domain, int domain_len, char *addr, int addr_len) {
-   if (domain && addr) {
-      if ( _valid_ip_addr(domain, domain_len) ) {
-         strncpy(addr, domain, domain_len);
-         return 1;
-      }
-      else {
-         dns_entry_t *e = _dns_find_domain(domain, domain_len);
-         if ( e ) {
-            strcpy(addr, e->addr);
-            return 1;
-         }
-      }
-   }
-   return 0;
-}
-
-int dns_domain_set_ip_local(
-   const char *domain, int domain_len, char *addr, int addr_len) {
-   if (domain && addr) {
-      if (dns_domain_query_ip_local(domain, domain_len, addr, addr_len) <= 0) {
-         _dns_entry_create(domain, domain_len, addr, addr_len);
-         return 1;
-      }
-   }
-   return 0;
-}
-
-static void
-_dns_enumerate_cb(void *opaque, const char *key, int keylen, void *value, int *stop) {
-   FILE *fp = opaque;
-   dns_entry_t *e = value;
-   fprintf(fp, "%s:%s:%d\n", e->domain, e->addr, e->date);
-}
-
+#if 0
 void
 dns_save() {
    dns_t *dns = _dns();
@@ -286,10 +262,10 @@ dns_save() {
    }
 }
 
-void dns_restore(const char *entry_path, const char *block_path) {
+void dns_restore(const char *entry_path) {
    dns_t *dns = _dns();
 
-   if (entry_path) {
+   if (/*entry_path*/0) {
       strcpy(dns->entry_path, entry_path);
       
       unsigned long flength = 0;
@@ -321,27 +297,5 @@ void dns_restore(const char *entry_path, const char *block_path) {
          mm_free((void*)dns_content);
       }
    }
-
-   if (block_path) {
-      _info("restore local blocks\n");
-      strcpy(dns->block_path, block_path);
-   
-      unsigned long flength = 0;
-      const char *block_content = misc_read_file(block_path, &flength);
-      if (block_content) {
-         str_t *hstr = str_clone_cstr(block_content, flength);
-         str_t *entries = str_split(hstr, "\n", 0);
-         if (entries) {
-            str_foreach(it, entries) {
-               block_entry_t *be = mm_malloc(sizeof(*be));;
-               be->domain_len = str_len(it);
-               strncpy(be->domain, str_cstr(it), be->domain_len);
-               //_err("load block <%s>, %d\n", misc_fix_str_1024(be->domain, be->domain_len), be->domain_len);
-               lst_pushl(dns->block_lst, be);
-            }
-         }
-         str_destroy(hstr);
-         mm_free((void*)block_content);
-      }
-   }
 }
+#endif

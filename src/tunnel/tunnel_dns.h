@@ -11,18 +11,13 @@
 #define TUNNEL_DNS_ADDR_LEN (16)
 #define TUNNEL_DNS_DOMAIN_LEN (378)
 
-int dns_domain_is_block(const char *domain, int domain_len);
+/* return addr==NLL means can not find */
+typedef void(*dns_query_callback)(char *addr, int addr_len, void *opaque);
 
-int dns_domain_query_ip(
-   const char *domain, int domain_len, char *addr, int addr_len);
+void dns_query_domain(
+   const char *domain, int domain_len, dns_query_callback cb, void *opaque);
 
-int dns_domain_query_ip_local(
-   const char *domain, int domain_len, char *addr, int addr_len);
-
-int dns_domain_set_ip_local(
-   const char *domain, int domain_len, char *addr, int addr_len);
-
-void dns_save(void);
-void dns_restore(const char *entry_path, const char *block_path);
+/* void dns_save(void); */
+/* void dns_restore(const char *entry_path); */
 
 #endif

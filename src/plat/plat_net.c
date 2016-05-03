@@ -310,12 +310,14 @@ _chann_accept(mnet_t *ss, chann_t *n) {
    socklen_t addr_len = sizeof(addr);
    int fd = accept(n->fd, (struct sockaddr*)&addr, &addr_len);
    if (fd > 0) {
-      chann_t *c = _chann_create(ss, n->type, CHANN_STATE_CONNECTED);
-      c->fd = fd;
-      c->addr = addr;
-      c->addr_len = addr_len;
-      _log("chann %p accept %p fd %d, from %s, count %d\n", n, c, c->fd, mnet_chann_addr(c), ss->chann_count);
-      return c;
+      if (_set_nonblocking(fd) >= 0) {
+         chann_t *c = _chann_create(ss, n->type, CHANN_STATE_CONNECTED);
+         c->fd = fd;
+         c->addr = addr;
+         c->addr_len = addr_len;
+         _log("chann %p accept %p fd %d, from %s, count %d\n", n, c, c->fd, mnet_chann_addr(c), ss->chann_count);
+         return c;
+      }
    }
    return NULL;
 }

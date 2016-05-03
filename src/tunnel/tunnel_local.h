@@ -13,6 +13,7 @@
 typedef enum {
    TUNNEL_LOCAL_MODE_INVALID = 0, /* invalid mode */
    TUNNEL_LOCAL_MODE_STANDALONE,  /* as sock5 proxy */
+   TUNNEL_LOCAL_MODE_FRONT,       /* as front end sock5 proxy */
 } tunnel_local_mode_t;
 
 typedef struct {

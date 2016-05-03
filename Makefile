@@ -1,16 +1,20 @@
 
 CC=gcc
-CFLAGS= -g -Wall -std=c99 -lc -Wdeprecated-declarations
+CFLAGS= -g -Wall -std=c99 -Wdeprecated-declarations
+LIBS= -lpthread -lc
 
 SRCS := $(shell find src -name "*.c")
 DIRS := $(shell find src -type d)
 
 INCS := $(foreach n, $(DIRS), -I$(n))
 
-all: sock5.out
+all: tun_local.out tun_remote.out
 
-sock5.out: $(SRCS)
-	$(CC) $(CFLAGS) $(INCS) -o $@ $^ -DTEST_TUNNEL_LOCAL -DMNET_BUF_SIZE=262144
+tun_local.out: $(SRCS)
+	$(CC) $(CFLAGS) $(INCS) -o $@ $^ $(LIBS) -DTEST_TUNNEL_LOCAL -DMNET_BUF_SIZE=262144
+
+tun_remote.out: $(SRCS)
+	$(CC) $(CFLAGS) $(INCS) -o $@ $^ $(LIBS) -DTEST_TUNNEL_REMOTE -DMNET_BUF_SIZE=262144
 
 clean:
 	rm -rf *.out *.dSYM

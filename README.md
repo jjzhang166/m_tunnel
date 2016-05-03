@@ -7,7 +7,7 @@ only support IPV4, under MacOSX and Linux.
 
 another simple local sock5 proxy in branch local_sock5.
 
-
+__TODO__: add crypto method.
 
 
 # Install & Running

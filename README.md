@@ -3,7 +3,9 @@
 
 m_tunnel was TCP tunnel with sock5 proxy interface, action like shadowsocks, but it only keeps 1 tcp connection between local and remote.
 
-only support IPV4.
+only support IPV4, under MacOSX and Linux.
+
+another simple local sock5 proxy in branch local_sock5.
 
 
 
@@ -18,6 +20,8 @@ only support IPV4.
 
 
 
+
+
 # Configure
 
 see config dir. 
@@ -25,4 +29,4 @@ see config dir.
 
 # Bugs & Question
 
-
+welcome Issues and PR.

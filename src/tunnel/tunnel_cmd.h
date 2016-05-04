@@ -19,7 +19,7 @@
 
 #define TUNNEL_CMD_CONST_HEADER_LEN 12
 
-#define TUNNEL_CHANN_BUF_SIZE  (64*1024)
+#define TUNNEL_CHANN_BUF_SIZE  32768 /* 32k */
 #define TUNNEL_CHANN_MAX_COUNT (1024)
 
 typedef struct {

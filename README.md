@@ -5,9 +5,10 @@ m_tunnel was TCP tunnel with sock5 proxy interface, action like shadowsocks, but
 
 only support IPV4, under MacOSX and Linux.
 
-another simple local sock5 proxy in branch local_sock5.
+using crypto from cloudwu's mptun https://github.com/cloudwu/mptun/.
 
-__TODO__: add crypto method.
+
+
 
 
 # Install & Running

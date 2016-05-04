@@ -11,9 +11,18 @@
 #include <time.h>
 #include <arpa/inet.h>
 
+#include "m_debug.h"
+#include "tunnel_cmd.h"
+
 /* fromo cloudwu's https://github.com/cloudwu/mptun/blob/master/mptun.c */
 
-#define TIME_DIFF 3600
+#define DEF_BUFF_SIZE TUNNEL_CHANN_BUF_SIZE
+
+#ifndef DEF_TIME_DIFF
+#define DEF_TIME_DIFF 3600
+#endif
+
+#define _err(...) _mlog("crypto", D_ERROR, __VA_ARGS__)
 
 struct rc4_sbox {
    int i;
@@ -143,8 +152,10 @@ mc_encrypt(const char *in, int sz, char *out, uint64_t key, time_t ti) {
    uint64_t h = mc_hash_key(in, sz);
    uint32_t tmp;
    struct rc4_sbox rs;
-   /* if (sz > BUFF_SIZE - 8) */
-   /*    return -1; */
+   if (sz > DEF_BUFF_SIZE - 8) {
+      _err("insufficient buffer size %d\n", sz);
+      return -1;
+   }
    key = hmac(key, ti);
    rc4_init(&rs, key);
    key ^= h;
@@ -164,6 +175,7 @@ mc_decrypt(const char *in, int sz, char *out, uint64_t key, time_t ti) {
    struct rc4_sbox rs;
    sz -= 8;
    if (sz < 0) {
+      _err("insufficient buffer size %d\n", sz);
       return -1;
    }
 
@@ -171,7 +183,8 @@ mc_decrypt(const char *in, int sz, char *out, uint64_t key, time_t ti) {
    memcpy(&check, in+4, 4);
    pt = ntohl(pt);
    check = ntohl(check);
-   if (abs((int)(pt - ti)) > TIME_DIFF) {
+   if (abs((int)(pt - ti)) > DEF_TIME_DIFF) {
+      _err("over time %d\n", DEF_TIME_DIFF);
       return -1;
    }
    key = hmac(key, pt);
@@ -182,13 +195,14 @@ mc_decrypt(const char *in, int sz, char *out, uint64_t key, time_t ti) {
    key ^= h;
 
    if (check != ((uint32_t)key ^ (uint32_t)(key >> 32))) {
+      _err("key invalid\n");
       return -1;
    }
    return sz;
 }
 
 int
-mc_enc(unsigned char *data, int data_len) {
+mc_enc_exp(unsigned char *data, int data_len) {
    for (int i=0; i<data_len; i++) {
       data[i] ^= 0x99;
    }
@@ -196,7 +210,7 @@ mc_enc(unsigned char *data, int data_len) {
 }
 
 int
-mc_dec(unsigned char *data, int data_len) {
+mc_dec_exp(unsigned char *data, int data_len) {
    for (int i=0; i<data_len; i++) {
       data[i] ^= 0x99;
    }

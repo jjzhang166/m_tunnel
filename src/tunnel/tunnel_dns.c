@@ -39,6 +39,10 @@
 #define _err(...) _mlog("dsn", D_ERROR, __VA_ARGS__)
 #define _info(...) _mlog("dns", D_INFO, __VA_ARGS__)
 
+#ifndef DEF_TUNNEL_DNS_COUNT
+#define DEF_TUNNEL_DNS_COUNT 40960
+#endif
+
 typedef struct {
    char domain[TUNNEL_DNS_DOMAIN_LEN];
    char addr[TUNNEL_DNS_ADDR_LEN];
@@ -63,7 +67,7 @@ _domain_stm_finalizer(void *ptr, void *ud) {
 
 static dns_t* _dns(void) {
    if (g_dns.entry_dict == NULL) {
-      g_dns.entry_dict = dict_create(8196);
+      g_dns.entry_dict = dict_create(DEF_TUNNEL_DNS_COUNT);
       g_dns.domain_stm = stm_create("dns_domain_cache", _domain_stm_finalizer, NULL);
       mthrd_after(MTHRD_AUX, _dns_mthrd_func, &g_dns, 0);
    }

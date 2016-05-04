@@ -1,7 +1,7 @@
 
 # About
 
-m_tunnel was TCP tunnel with sock5 proxy interface, action like shadowsocks, but it only keeps 1 tcp connection between local and remote.
+m_tunnel was TCP tunnel VPN with sock5 proxy interface, action like shadowsocks, but it only keeps 1 tcp connection between local and remote.
 
 only support IPV4, under MacOSX and Linux.
 

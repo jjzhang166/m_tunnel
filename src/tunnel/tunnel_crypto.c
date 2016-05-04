@@ -186,3 +186,19 @@ mc_decrypt(const char *in, int sz, char *out, uint64_t key, time_t ti) {
    }
    return sz;
 }
+
+int
+mc_enc(unsigned char *data, int data_len) {
+   for (int i=0; i<data_len; i++) {
+      data[i] ^= 0x99;
+   }
+   return 0;
+}
+
+int
+mc_dec(unsigned char *data, int data_len) {
+   for (int i=0; i<data_len; i++) {
+      data[i] ^= 0x99;
+   }
+   return 0;
+}

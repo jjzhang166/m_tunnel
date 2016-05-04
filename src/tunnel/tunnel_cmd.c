@@ -27,8 +27,8 @@ tunnel_cmd_check(buf_t *b, tunnel_cmd_t *cmd) {
       cmd->payload = &d[TUNNEL_CMD_CONST_HEADER_LEN];
 
       if (buf_buffered(b) >= cmd->data_len) {
-         _verbose("chann %d:%d cmd %d, length %d\n", cmd->chann_id,
-                  cmd->magic, cmd->cmd, cmd->data_len);
+         /* _verbose("chann %d:%d cmd %d, length %d\n", cmd->chann_id, */
+         /*          cmd->magic, cmd->cmd, cmd->data_len); */
          return 1;
       }
       /* _err("not enought data %d:%d !\n", buf_buffered(b), cmd->data_len); */

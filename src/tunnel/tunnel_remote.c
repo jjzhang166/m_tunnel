@@ -30,6 +30,7 @@
 #include "tunnel_cmd.h"
 #include "tunnel_dns.h"
 #include "tunnel_remote.h"
+#include "tunnel_crypto.h"
 
 #include <assert.h>
 
@@ -93,9 +94,9 @@ typedef struct {
 
 static tun_remote_t _g_remote;
 
-static void _tun_remote_tcpout_cb(chann_event_t *e);
-static void _tun_remote_tcpin_cb(chann_event_t *e);
-static void _tun_remote_chann_close(tun_remote_chann_t*);
+static void _remote_tcpout_cb(chann_event_t *e);
+static void _remote_tcpin_cb(chann_event_t *e);
+static void _remote_chann_close(tun_remote_chann_t*);
 
 static inline tun_remote_t* _tun_remote(void) {
    return &_g_remote;
@@ -117,7 +118,7 @@ _dns_query_destroy(dns_query_t *query) {
 }
 
 static tun_remote_client_t*
-_tun_remote_client_create(chann_t *n) {
+_remote_client_create(chann_t *n) {
    tun_remote_t *tun = _tun_remote();
    tun_remote_client_t *c = (tun_remote_client_t*)mm_malloc(sizeof(*c));
    c->tcpin = n;
@@ -126,13 +127,13 @@ _tun_remote_client_create(chann_t *n) {
    c->active_lst = lst_create();
    c->free_lst = lst_create();
    c->node = lst_pushl(tun->clients_lst, c);
-   mnet_chann_set_cb(n, _tun_remote_tcpin_cb, c);
+   mnet_chann_set_cb(n, _remote_tcpin_cb, c);
    //_verbose("client create %p(%p), %d\n", c, c->tcpin, lst_count(tun->clients_lst));
    return c;
 }
 
 static void
-_tun_remote_client_destroy(tun_remote_client_t *c) {
+_remote_client_destroy(tun_remote_client_t *c) {
    tun_remote_t *tun = _tun_remote();
    if (c->node) {
       mnet_chann_set_cb(c->tcpin, NULL, NULL);
@@ -144,7 +145,7 @@ _tun_remote_client_destroy(tun_remote_client_t *c) {
       c->bufin = NULL;
 
       while (lst_count(c->active_lst) > 0) {
-         _tun_remote_chann_close(lst_first(c->active_lst));
+         _remote_chann_close(lst_first(c->active_lst));
       }
       lst_destroy(c->active_lst);
 
@@ -163,7 +164,7 @@ _tun_remote_client_destroy(tun_remote_client_t *c) {
 }
 
 static tun_remote_chann_t*
-_tun_remote_chann_open(tun_remote_client_t *c, tunnel_cmd_t *tcmd, char *addr, int port) {
+_remote_chann_open(tun_remote_client_t *c, tunnel_cmd_t *tcmd, char *addr, int port) {
    tun_remote_chann_t *rc = NULL;
    if ( c->channs[tcmd->chann_id] ) {
       return c->channs[tcmd->chann_id];
@@ -183,7 +184,7 @@ _tun_remote_chann_open(tun_remote_client_t *c, tunnel_cmd_t *tcmd, char *addr, i
    rc->tcpout = mnet_chann_open(CHANN_TYPE_STREAM);
 
    c->channs[tcmd->chann_id] = rc;
-   mnet_chann_set_cb(rc->tcpout, _tun_remote_tcpout_cb, rc);
+   mnet_chann_set_cb(rc->tcpout, _remote_tcpout_cb, rc);
 
    if (mnet_chann_connect(rc->tcpout, addr, port) > 0) {
       /* _verbose("chann %d:%d open, [a:%d, f:%d]\n", rc->chann_id, rc->magic, */
@@ -195,7 +196,7 @@ _tun_remote_chann_open(tun_remote_client_t *c, tunnel_cmd_t *tcmd, char *addr, i
 }
 
 static void
-_tun_remote_chann_closing(tun_remote_chann_t *rc) {
+_remote_chann_closing(tun_remote_chann_t *rc) {
    /* _verbose("chann %d:%d closing %p\n", rc->chann_id, rc->magic, rc); */
 
    rc->state = REMOTE_CHANN_STATE_DISCONNECT;
@@ -206,13 +207,13 @@ _tun_remote_chann_closing(tun_remote_chann_t *rc) {
 }
 
 void
-_tun_remote_chann_close(tun_remote_chann_t *rc) {
+_remote_chann_close(tun_remote_chann_t *rc) {
    tun_remote_client_t *c = (tun_remote_client_t*)rc->client;
    if (c->node) {
       _verbose("chann %d:%d close [a:%d, f:%d]\n", rc->chann_id, rc->magic,
                lst_count(c->active_lst), lst_count(c->free_lst));
 
-      _tun_remote_chann_closing(rc);
+      _remote_chann_closing(rc);
 
       c->channs[rc->chann_id] = NULL;
       rc->chann_id = 0;
@@ -240,7 +241,7 @@ _remote_chann_of_id_magic(tun_remote_client_t *c, int chann_id, int magic) {
 }
 
 static void
-_tun_remote_aux_dns_cb(char *addr, int addr_len, void *opaque) {
+_remote_aux_dns_cb(char *addr, int addr_len, void *opaque) {
    dns_query_t *q = (dns_query_t*)opaque;
 
    if (addr) {
@@ -252,8 +253,19 @@ _tun_remote_aux_dns_cb(char *addr, int addr_len, void *opaque) {
    stm_pushl(_tun_remote()->ip_stm, q);
 }
 
+static int
+_remote_send_front_data(tun_remote_client_t *c, unsigned char *buf, int len) {
+   mc_enc(&buf[3], len-3);
+   return mnet_chann_send(c->tcpin, buf, len);
+}
+
 static void
-_tun_remote_send_connect_result(tun_remote_client_t *c, int chann_id, int magic, int result) {
+_remote_recv_front_data(tun_remote_client_t *c, unsigned char *buf, int len) {
+   mc_dec(&buf[3], len-3);
+}
+
+static void
+_remote_send_connect_result(tun_remote_client_t *c, int chann_id, int magic, int result) {
    unsigned char data[32] = {0};
 
    int hlen = TUNNEL_CMD_CONST_HEADER_LEN;
@@ -287,7 +299,7 @@ _tun_remote_send_connect_result(tun_remote_client_t *c, int chann_id, int magic,
       }
    }
 
-   int ret = mnet_chann_send(c->tcpin, data, data_len);
+   int ret = _remote_send_front_data(c, data, data_len);
    if (ret < data_len) {
       _err("fail to send connect result %d, %d!\n", ret, data_len);
    }
@@ -296,21 +308,23 @@ _tun_remote_send_connect_result(tun_remote_client_t *c, int chann_id, int magic,
 }
 
 static void
-_tun_remote_send_echo(tun_remote_client_t *c) {
+_remote_send_echo(tun_remote_client_t *c) {
    unsigned char data[32] = {0};
    int data_len = TUNNEL_CMD_CONST_HEADER_LEN + 1;
    memset(data, 0, sizeof(data));
+
    tunnel_cmd_data_len(data, 1, data_len);
    tunnel_cmd_chann_id(data, 1, 0);
    tunnel_cmd_chann_magic(data, 1, 0);
    tunnel_cmd_head_cmd(data, 1, TUNNEL_CMD_ECHO);
    data[data_len - 1] = 1;
-   mnet_chann_send(c->tcpin, data, data_len);
+
+   _remote_send_front_data(c, data, data_len);
    _verbose("response echo to %p\n", c);
 }
 
 static void
-_tun_remote_send_close(tun_remote_client_t *c, tun_remote_chann_t *rc, int result) {
+_remote_send_close(tun_remote_client_t *c, tun_remote_chann_t *rc, int result) {
    unsigned char data[16] = {0};
 
    int data_len = TUNNEL_CMD_CONST_HEADER_LEN + 1;
@@ -322,25 +336,11 @@ _tun_remote_send_close(tun_remote_client_t *c, tun_remote_chann_t *rc, int resul
 
    data[data_len - 1] = result; /* omit */
 
-   mnet_chann_send(c->tcpin, data, data_len);
-}
-
-static inline void
-_tun_remote_chann_encrypt(tun_remote_chann_t *rc, char *data, int data_len) {
-   for (int i=0; i<data_len; i++) {
-      data[i] ^= 0x99;
-   }
-}
-
-static inline void
-_tun_remote_chann_decrypt(tun_remote_chann_t *rc, char *data, int data_len) {
-   for (int i=0; i<data_len; i++) {
-      data[i] ^= 0x99;
-   }
+   _remote_send_front_data(c, data, data_len);
 }
 
 void
-_tun_remote_tcpin_cb(chann_event_t *e) {
+_remote_tcpin_cb(chann_event_t *e) {
    tun_remote_client_t *c = (tun_remote_client_t*)e->opaque;
    if (c->bufin == NULL) {
       return;
@@ -372,7 +372,11 @@ _tun_remote_tcpin_cb(chann_event_t *e) {
             return;
          }
 
+         /* decode data */
+         _remote_recv_front_data(c, buf_addr(ib,0), buf_buffered(ib));
+
          /* _verbose("%d, %d\n", tcmd.data_len, buf_buffered(ib)); */
+         tunnel_cmd_check(ib, &tcmd);
          if (tcmd.cmd<=TUNNEL_CMD_NONE || tcmd.cmd>TUNNEL_CMD_DATA) {
             assert(0);
          }
@@ -380,7 +384,7 @@ _tun_remote_tcpin_cb(chann_event_t *e) {
          c->data_mark++;
 
          if (tcmd.cmd == TUNNEL_CMD_ECHO) {
-            _tun_remote_send_echo(c);
+            _remote_send_echo(c);
             goto reset_buffer;
          }
 
@@ -392,7 +396,6 @@ _tun_remote_tcpin_cb(chann_event_t *e) {
 
                if (rc && rc->state==REMOTE_CHANN_STATE_CONNECTED) {
                   int hlen = TUNNEL_CMD_CONST_HEADER_LEN;
-                  _tun_remote_chann_decrypt(rc, (char*)tcmd.payload, tcmd.data_len - hlen);
                   mnet_chann_send(rc->tcpout, tcmd.payload, tcmd.data_len - hlen);
                }
             }
@@ -410,9 +413,9 @@ _tun_remote_tcpin_cb(chann_event_t *e) {
                   _verbose("chann %d:%d try connect ip [%s:%d], %d\n", tcmd.chann_id,
                            tcmd.magic, addr, port, strlen(addr));
 
-                  tun_remote_chann_t *rc = _tun_remote_chann_open(c, &tcmd, addr, port);
+                  tun_remote_chann_t *rc = _remote_chann_open(c, &tcmd, addr, port);
                   if (rc == NULL) {
-                     _tun_remote_send_connect_result(c, tcmd.chann_id, tcmd.magic, 0);
+                     _remote_send_connect_result(c, tcmd.chann_id, tcmd.magic, 0);
                   }
                }
                else {
@@ -424,13 +427,13 @@ _tun_remote_tcpin_cb(chann_event_t *e) {
                            tcmd.magic, domain, port, strlen(addr));
                   
                   dns_query_t *query_entry = _dns_query_create(port, tcmd.chann_id, tcmd.magic, c);
-                  dns_query_domain(domain, strlen(domain), _tun_remote_aux_dns_cb, query_entry);
+                  dns_query_domain(domain, strlen(domain), _remote_aux_dns_cb, query_entry);
                }
             }
             else if (tcmd.cmd == TUNNEL_CMD_CLOSE) {
                tun_remote_chann_t *rc = _remote_chann_of_id_magic(c, tcmd.chann_id, tcmd.magic);
                if (rc) {
-                  _tun_remote_chann_closing(rc);
+                  _remote_chann_closing(rc);
                }
             }
          }
@@ -456,12 +459,12 @@ _tun_remote_tcpin_cb(chann_event_t *e) {
                   {
                      c->state = REMOTE_CLIENT_STATE_ACCEPT;
                      data[data_len - 1] = 1;
-                     mnet_chann_send(c->tcpin, data, data_len);
+                     _remote_send_front_data(c, data, data_len);
                   }
                   else {
                      data[data_len - 1] = 0;
                      _err("fail to auth <%s>, <%s>\n", username, passwd);
-                     _tun_remote_client_destroy(c);
+                     _remote_client_destroy(c);
                   }
                }
                _verbose("(in) accept client %p, %d\n", c, auth_type);
@@ -476,12 +479,12 @@ _tun_remote_tcpin_cb(chann_event_t *e) {
    }
    else if (e->event == MNET_EVENT_CLOSE) {
       _verbose("client close event !\n");
-      _tun_remote_client_destroy(c);
+      _remote_client_destroy(c);
    }
 }
 
 void
-_tun_remote_tcpout_cb(chann_event_t *e) {
+_remote_tcpout_cb(chann_event_t *e) {
    tun_remote_chann_t *rc = (tun_remote_chann_t*)e->opaque;
    tun_remote_client_t *c = (tun_remote_client_t*)rc->client;
    
@@ -507,8 +510,7 @@ _tun_remote_tcpout_cb(chann_event_t *e) {
          tunnel_cmd_chann_magic(data, 1, rc->magic);
          tunnel_cmd_head_cmd(data, 1, TUNNEL_CMD_DATA);
 
-         _tun_remote_chann_encrypt(rc, (char*)&data[hlen], data_len - hlen);
-         mnet_chann_send(c->tcpin, data, data_len);
+         _remote_send_front_data(c, data, data_len);
 
          buf_reset(ob);
       }
@@ -517,38 +519,38 @@ _tun_remote_tcpout_cb(chann_event_t *e) {
       if (rc->state == REMOTE_CHANN_STATE_NONE) {
          _verbose("chann %d:%d connected\n", rc->chann_id, rc->magic);
          rc->state = REMOTE_CHANN_STATE_CONNECTED;
-         _tun_remote_send_connect_result(c, rc->chann_id, rc->magic, 1);
+         _remote_send_connect_result(c, rc->chann_id, rc->magic, 1);
       }
    }
    else if (e->event == MNET_EVENT_DISCONNECT) {
       _verbose("chann %d disconnect\n", rc->chann_id);
       if (rc->state == REMOTE_CHANN_STATE_NONE) {
-         _tun_remote_send_connect_result(c, rc->chann_id, rc->magic, 0);
+         _remote_send_connect_result(c, rc->chann_id, rc->magic, 0);
       }
       else if (rc->state == REMOTE_CHANN_STATE_CONNECTED) {
-         _tun_remote_send_close(c, rc, 1);
-         _tun_remote_chann_closing(rc);
+         _remote_send_close(c, rc, 1);
+         _remote_chann_closing(rc);
       }
    }
    else if (e->event == MNET_EVENT_CLOSE) {
       _verbose("chann %d close, mnet\n", rc->chann_id);
-      _tun_remote_send_close(c, rc, 1);
-      _tun_remote_chann_close(rc);
+      _remote_send_close(c, rc, 1);
+      _remote_chann_close(rc);
    }
 }
 
 static void
-_tun_remote_listen_cb(chann_event_t *e) {
+_remote_listen_cb(chann_event_t *e) {
    if (e->event == MNET_EVENT_ACCEPT) {
       tun_remote_t *tun = _tun_remote();
       if (lst_count(tun->clients_lst) < 6) {
-         _tun_remote_client_create(e->r);
+         _remote_client_create(e->r);
       }
    }
 }
 
 static void
-_tun_stm_finalizer(void *ptr, void *ud) {
+_remote_stm_finalizer(void *ptr, void *ud) {
    mm_free(ptr);
 }
 
@@ -563,10 +565,10 @@ tunnel_remote_open(tunnel_remote_config_t *conf) {
 
       tun->conf = *conf;
       tun->clients_lst = lst_create();
-      tun->ip_stm = stm_create("remote_dns_cache", _tun_stm_finalizer, tun);
+      tun->ip_stm = stm_create("remote_dns_cache", _remote_stm_finalizer, tun);
 
       tun->tcpin = mnet_chann_open(CHANN_TYPE_STREAM);
-      mnet_chann_set_cb(tun->tcpin, _tun_remote_listen_cb, tun);
+      mnet_chann_set_cb(tun->tcpin, _remote_listen_cb, tun);
       if (mnet_chann_listen_ex(tun->tcpin, conf->local_ipaddr, conf->local_port, 2) <= 0) {
          exit(1);
       }
@@ -596,19 +598,19 @@ tunnel_remote_close(void) {
 #endif
 
 static void
-_tun_remote_sig_timer(int sig) {
+_remote_sig_timer(int sig) {
    tun_remote_t *tun = _tun_remote();
    tun->timer_active = 1;
 }
 
 static int
-_tun_remote_install_sig_timer() {
+_remote_install_sig_timer() {
    struct itimerval tick;
    tick.it_value.tv_sec = 60;
    tick.it_value.tv_usec = 0;
    tick.it_interval.tv_sec = 60; /* 60 s */
    tick.it_interval.tv_usec = 0;
-   if (signal(SIGALRM, _tun_remote_sig_timer) == SIG_ERR) {
+   if (signal(SIGALRM, _remote_sig_timer) == SIG_ERR) {
       fprintf(stderr, "Fail to install signal\n");
       return 0;
    }
@@ -687,7 +689,7 @@ main(int argc, char *argv[]) {
 
    signal(SIGPIPE, SIG_IGN);
 
-   if (_tun_remote_install_sig_timer() <= 0) {
+   if (_remote_install_sig_timer() <= 0) {
       fprintf(stderr, "[local] fail to install sig timer !\n");
       return 0;
    }
@@ -759,14 +761,14 @@ main(int argc, char *argv[]) {
                      is_connect = 0;
                   }
                   else {
-                     tun_remote_chann_t *rc = _tun_remote_chann_open(c, &tcmd, q->addr, q->port);
+                     tun_remote_chann_t *rc = _remote_chann_open(c, &tcmd, q->addr, q->port);
                      if (rc == NULL) {
                         is_connect = 0;
                      }
                   }
 
                   if ( !is_connect ) {
-                     _tun_remote_send_connect_result(c, tcmd.chann_id, tcmd.magic, 0);
+                     _remote_send_connect_result(c, tcmd.chann_id, tcmd.magic, 0);
                   }
                }
                

@@ -13,4 +13,7 @@ uint64_t mc_hash_key(const char * str, int sz);
 int mc_encrypt(const char *in, int sz, char *out, uint64_t key, time_t ti);
 int mc_decrypt(const char *in, int sz, char *out, uint64_t key, time_t ti);
 
+int mc_enc(unsigned char *data, int data_len);
+int mc_dec(unsigned char *data, int data_len);
+
 #endif

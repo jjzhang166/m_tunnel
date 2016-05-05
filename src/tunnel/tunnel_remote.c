@@ -93,6 +93,7 @@ typedef struct {
    chann_t *tcpout;             /* for mode forward */
    buf_t *buftmp;               /* buf for crypto */
    lst_t *clients_lst;          /* acitve cilent */
+   lst_t *leave_lst;            /* client to leave */
    stm_t *ip_stm;
 } tun_remote_t;
 
@@ -100,6 +101,7 @@ static tun_remote_t _g_remote;
 
 static void _remote_tcpout_cb(chann_event_t *e);
 static void _remote_tcpin_cb(chann_event_t *e);
+static void _remote_chann_closing(tun_remote_chann_t*);
 static void _remote_chann_close(tun_remote_chann_t*);
 
 static inline tun_remote_t* _tun_remote(void) {
@@ -149,7 +151,9 @@ _remote_client_destroy(tun_remote_client_t *c) {
       c->bufin = NULL;
 
       while (lst_count(c->active_lst) > 0) {
-         _remote_chann_close(lst_first(c->active_lst));
+         tun_remote_chann_t *rc = lst_first(c->active_lst);
+         _remote_chann_closing(rc);
+         _remote_chann_close(rc);
       }
       lst_destroy(c->active_lst);
 
@@ -199,7 +203,7 @@ _remote_chann_open(tun_remote_client_t *c, tunnel_cmd_t *tcmd, char *addr, int p
    return NULL;
 }
 
-static void
+void
 _remote_chann_closing(tun_remote_chann_t *rc) {
    /* _verbose("chann %d:%d closing %p\n", rc->chann_id, rc->magic, rc); */
 
@@ -217,6 +221,7 @@ _remote_chann_close(tun_remote_chann_t *rc) {
       _verbose("chann %d:%d close [a:%d, f:%d]\n", rc->chann_id, rc->magic,
                lst_count(c->active_lst), lst_count(c->free_lst));
 
+      mnet_chann_set_cb(rc->tcpout, NULL, NULL);
       _remote_chann_closing(rc);
 
       c->channs[rc->chann_id] = NULL;
@@ -521,7 +526,7 @@ _remote_tcpin_cb(chann_event_t *e) {
    }
    else if (e->event == MNET_EVENT_CLOSE) {
       _verbose("client close event !\n");
-      _remote_client_destroy(c);
+      lst_pushl(_tun_remote()->leave_lst, c);
    }
 }
 
@@ -613,6 +618,7 @@ tunnel_remote_open(tunnel_remote_config_t *conf) {
 
       tun->conf = *conf;
       tun->clients_lst = lst_create();
+      tun->leave_lst = lst_create();
       tun->ip_stm = stm_create("remote_dns_cache", _remote_stm_finalizer, tun);
 
       tun->tcpin = mnet_chann_open(CHANN_TYPE_STREAM);
@@ -764,32 +770,21 @@ main(int argc, char *argv[]) {
          for (int i=0;;i++) {
 
             if (i > TUNNEL_CHANN_MAX_COUNT) {
-               i = 0;
+               i = 0; 
                mtime_sleep(1);
             }
 
             _remote_update_ti();
             mnet_check( -1 );
 
-            if (tun->timer_active > 0) {
-               tun->timer_active = 0;
 
-               lst_foreach(it, tun->clients_lst) {
-                  tun_remote_client_t *c = lst_iter_data(it);
-                  if (c->data_mark <= 0) {
-                     if (mnet_chann_state(c->tcpin) >= CHANN_STATE_CONNECTING) {
-                        mnet_chann_close(c->tcpin);
-                        _info("clean zoombie client %p\n", c);
-                     }
-                  }
-                  c->data_mark = 0;
-               }
-
-               mm_report(1);
-               _verbose("chann count %d\n", mnet_report(0));
+            /* close inactive client */
+            while (lst_count(tun->leave_lst) > 0) {
+               _remote_client_destroy(lst_popf(tun->leave_lst));
             }
 
-            /* check ip_stm */
+
+            /* check dns ip_stm */
             while (stm_count(tun->ip_stm) > 0) {
                dns_query_t *q = stm_popf(tun->ip_stm);
                tun_remote_client_t *c = q->opaque;
@@ -827,6 +822,14 @@ main(int argc, char *argv[]) {
                }
                
                _dns_query_destroy(q);
+            }
+
+
+            /* mem report */
+            if (tun->timer_active > 0) {
+               tun->timer_active = 0;
+               mm_report(1);
+               _verbose("chann count %d\n", mnet_report(0));
             }
          }
 

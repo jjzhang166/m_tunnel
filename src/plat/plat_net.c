@@ -110,6 +110,11 @@ typedef struct s_mnet {
 
 static mnet_t g_mnet;
 
+static inline mnet_t*
+_gmnet() {
+   return &g_mnet;
+}
+
 /* buf op
  */
 static inline int
@@ -144,7 +149,6 @@ _rwb_create_tail(rwb_head_t *h) {
       h->count++;
    }
    return h->tail;
-#undef _RWB_NEW
 }
 
 static void
@@ -345,7 +349,7 @@ _chann_event(chann_t *n, mnet_event_type_t event, chann_t *r) {
  */
 int
 mnet_init() {
-   mnet_t *ss = &g_mnet;
+   mnet_t *ss = _gmnet();
    if ( !ss->init ) {
 #ifdef _WIN32
       WSADATA wdata;
@@ -356,7 +360,7 @@ mnet_init() {
 #else
       signal(SIGPIPE, SIG_IGN);
 #endif
-      memset(&g_mnet, 0, sizeof(mnet_t));
+      memset(ss, 0, sizeof(mnet_t));
       ss->init = 1;
       _log("init\n");
       return 1;
@@ -366,7 +370,7 @@ mnet_init() {
 
 void
 mnet_fini() {
-   mnet_t *ss = &g_mnet;
+   mnet_t *ss = _gmnet();
    if ( ss->init ) {
       chann_t *n = ss->channs;
       while ( n ) {
@@ -385,7 +389,7 @@ mnet_fini() {
 }
 
 int mnet_report(int level) {
-   mnet_t *ss = &g_mnet;
+   mnet_t *ss = _gmnet();
    if (ss->init) {
       if (level > 0){
          _log("-------- channs --------\n");
@@ -404,14 +408,14 @@ int mnet_report(int level) {
 
 chann_t*
 mnet_chann_open(chann_type_t type) {
-   return _chann_create(&g_mnet, type, CHANN_STATE_CLOSED);
+   return _chann_create(_gmnet(), type, CHANN_STATE_CLOSED);
 }
 
 void mnet_chann_close(chann_t *n) {
    if ( n ) {
       if (n->state == CHANN_STATE_CLOSING) {
-         _chann_close(&g_mnet, n);
-         _chann_destroy(&g_mnet, n);
+         _chann_close(_gmnet(), n);
+         _chann_destroy(_gmnet(), n);
       } else {
          n->state = CHANN_STATE_CLOSING;
       }
@@ -555,16 +559,24 @@ _chann_send(chann_t *n, void *buf, int len) {
 
 int mnet_chann_send(chann_t *n, void *buf, int len) {
    if ( n ) {
-      int ret = _chann_send(n, buf, len);
-      if (ret <= 0) {
-         if (errno != EWOULDBLOCK) {
-            /* perror("chann send: "); */
-            n->state = CHANN_STATE_CLOSING;
+      int ret = len;
+      rwb_head_t *prh = &n->rwb_send;
+
+      if (_rwb_count(prh) > 0) {
+         _rwb_cache(prh, buf, len);
+      }
+      else {
+         ret = _chann_send(n, buf, len);
+         if (ret <= 0) {
+            if (errno != EWOULDBLOCK) {
+               /* perror("chann send: "); */
+               n->state = CHANN_STATE_CLOSING;
+            }
+         } else if (ret < len) {
+            _rwb_cache(prh, ((char*)buf) + ret, len - ret);
+            printf("------------ cache %d of %d!\n", ret, len);
+            ret = len;
          }
-      } else if (ret < len) {
-         _rwb_cache(&n->rwb_send, ((char*)buf) + ret, len - ret);
-         ret = len;
-         printf("------------ cache !\n");
       }
       return ret;
    }
@@ -573,10 +585,11 @@ int mnet_chann_send(chann_t *n, void *buf, int len) {
 }
 
 int mnet_chann_cached(chann_t *n) {
-   if (n && _rwb_count(&n->rwb_send) > 0) {
-      rwb_t *b = n->rwb_send.head;
+   rwb_head_t *prh = &n->rwb_send;
+   if (n && _rwb_count(prh) > 0) {
+      rwb_t *b = prh->head;
       int i = 0, bytes = 0;
-      for (i=0; i<_rwb_count(&n->rwb_send); i++) {
+      for (i=0; i<_rwb_count(prh); i++) {
          bytes += _rwb_buffered(b);
          b = b->next;
       }
@@ -610,7 +623,7 @@ int
 mnet_check(int microseconds) {
    int nfds = 0;
    chann_t *n = NULL;
-   mnet_t *ss = &g_mnet;
+   mnet_t *ss = _gmnet();
    fd_set *sr, *sw, *se;
 
    nfds = 0;
@@ -693,13 +706,12 @@ mnet_check(int microseconds) {
                _chann_event(n, MNET_EVENT_RECV, NULL);
             }
             if ( _select_isset(sw, n->fd) ) {
-               if (_rwb_count(&n->rwb_send) > 0) {
-                  int ret, len;
-                  do {
-                     char *buf = _rwb_drain_param(&n->rwb_send, &len);
-                     ret = _chann_send(n, buf, len);
-                     if (ret > 0) _rwb_drain(&n->rwb_send, ret);
-                  } while ((ret>0) && (_rwb_count(&n->rwb_send)>0));
+               rwb_head_t *prh = &n->rwb_send;
+               if (_rwb_count(prh) > 0) {
+                  int ret=0, len=0;
+                  char *buf = _rwb_drain_param(prh, &len);
+                  ret = _chann_send(n, buf, len);
+                  if (ret > 0) _rwb_drain(prh, ret);
                }
                else if ( n->active_send_event ) {
                   _chann_event(n, MNET_EVENT_SEND, NULL);

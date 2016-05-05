@@ -762,7 +762,7 @@ main(int argc, char *argv[]) {
 
          for (int i=0;;i++) {
 
-            if (i > TUNNEL_CHANN_MAX_COUNT) {
+            if (i >= TUNNEL_CHANN_MAX_COUNT) {
                i = 0;
                mtime_sleep(1);
             }
@@ -778,8 +778,6 @@ main(int argc, char *argv[]) {
                }
                tun->data_mark = 0;
 
-               /* 5 min */
-               //dns_save();
                mm_report(1);
                _verbose("chann count %d\n", mnet_report(0));
             }

@@ -25,7 +25,11 @@ using crypto from cloudwu's mptun https://github.com/cloudwu/mptun/.
 
 # Configure
 
-see config dir. 
+see config dir, using \TAB to seperate key/value.
+
+
+
+
 
 
 # Bugs & Question

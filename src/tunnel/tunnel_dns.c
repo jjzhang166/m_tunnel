@@ -5,7 +5,7 @@
  * under the terms of the MIT license. See LICENSE for details.
  */
 
-#define _POSIX_SOURCE
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -113,10 +113,9 @@ _valid_ip_addr(const char *addr, int addr_len) {
 /* description: query it from DNS server */
 static int
 _dns_addr_by_name(const char *domain, int domain_len, char *addr, int addr_len) {
-#if 1
    int error = 0;
-   struct sockaddr_in sa;
-   struct addrinfo *result = NULL;
+   struct sockaddr_in sa, *valid_in=NULL;
+   struct addrinfo *result=NULL, *curr=NULL;
 
    sa.sin_family = AF_INET;
    error = getaddrinfo(domain, "http", NULL, &result);
@@ -124,8 +123,21 @@ _dns_addr_by_name(const char *domain, int domain_len, char *addr, int addr_len) 
       _err("Fail to get addr info: [%s] of %s\n", gai_strerror(error));
       goto fail;
    }
-    
-   memcpy(&sa, result->ai_addr, sizeof(sa));
+
+   for (curr = result; curr != NULL; curr = curr->ai_next) {
+      char ipstr[16] = {0};
+      inet_ntop(AF_INET, &(((struct sockaddr_in *)(curr->ai_addr))->sin_addr), ipstr, 16);
+      if (strlen(ipstr) > 7) { // '0.0.0.0'
+         valid_in = (struct sockaddr_in*)curr->ai_addr;
+         memcpy(&sa, valid_in, sizeof(sa));
+         break;
+      }
+   }
+
+   if (valid_in == NULL) {
+      _err("Fail to get valid address !\n");
+      goto fail;
+   }
 
    error = getnameinfo((struct sockaddr*)&sa, sizeof(sa), addr, addr_len,
                        NULL, 0, NI_NUMERICHOST);
@@ -138,25 +150,6 @@ _dns_addr_by_name(const char *domain, int domain_len, char *addr, int addr_len) 
    if ( result ) {
       freeaddrinfo(result);
    }
-#else
-   struct addrinfo hints, *res, *res0;
-   int error;
-
-   memset(&hints, 0, sizeof(hints));
-   hints.ai_family = AF_INET;//PF_UNSPEC;
-   hints.ai_socktype = SOCK_STREAM;
-   error = getaddrinfo(domain, "http", &hints, &res0);
-   if (error) {
-      _err("Fail to get addr info: %s", gai_strerror(error));
-      return 0;
-   }
-   for (res = res0; res; res = res->ai_next) {
-      struct sockaddr_in *s = (struct sockaddr_in*)res->ai_addr->sa_data;
-      strncpy(addr, inet_ntoa(s->sin_addr), addr_len);
-      break;
-   }
-   freeaddrinfo(res0);
-#endif
    return _valid_ip_addr(addr, strlen(addr));
 }
 

@@ -188,7 +188,7 @@ mc_decrypt(const char *in, int sz, char *out, uint64_t key, time_t ti) {
    pt = ntohl(pt);
    check = ntohl(check);
    if (abs((int)(pt - ti)) > DEF_TIME_DIFF) {
-      _err("over time %d\n", DEF_TIME_DIFF);
+      _err("over time %d seconds\n", DEF_TIME_DIFF);
       return -1;
    }
    key = hmac(key, pt);

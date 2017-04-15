@@ -282,7 +282,7 @@ _remote_send_front_data(tun_remote_client_t *c, unsigned char *buf, int buf_len)
 #endif
 }
 
-static void
+static int
 _remote_recv_front_data(tun_remote_client_t *c, buf_t *b) {
    char *buf = (char*)buf_addr(b,0);
    int buf_len = buf_buffered(b);
@@ -294,7 +294,10 @@ _remote_recv_front_data(tun_remote_client_t *c, buf_t *b) {
    char *tbuf = (char*)buf_addr(tun->buftmp,0);
 
    int data_len = mc_decrypt(&buf[3], buf_len-3, tbuf, tun->key, tun->ti);
-   assert(data_len > 0);
+   if (data_len <= 0) {
+      _err("Invalid data_len !\n");
+      return 0;
+   }
 
    memcpy(&buf[3], tbuf, data_len);
    tunnel_cmd_data_len((void*)buf, 1, data_len + 3);
@@ -302,6 +305,7 @@ _remote_recv_front_data(tun_remote_client_t *c, buf_t *b) {
    buf_reset(b);
    buf_forward_ptw(b, data_len + 3);
 #endif
+   return 1;
 }
 
 static void
@@ -420,7 +424,9 @@ _remote_tcpin_cb(chann_event_t *e) {
          }
 
          /* decode data */
-         _remote_recv_front_data(c, ib);
+         if (_remote_recv_front_data(c, ib) <= 0) {
+            goto reset_buffer;
+         }
 
          /* _verbose("%d, %d\n", tcmd.data_len, buf_buffered(ib)); */
          tunnel_cmd_check(ib, &tcmd);

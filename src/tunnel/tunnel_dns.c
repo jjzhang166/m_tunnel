@@ -6,16 +6,23 @@
  */
 
 #define _GNU_SOURCE
+#define _CRT_SECURE_NO_WARNINGS
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <sys/types.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#else
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#endif
 
 #include "m_mem.h"
 #include "m_dict.h"
@@ -81,7 +88,7 @@ static int _dns_date() {
 static dns_entry_t*
 _dns_entry_create(const char *domain, int domain_len, const char *addr, int addr_len) {
    dns_t *dns = _dns();
-   dns_entry_t *e = mm_malloc(sizeof(*e));
+   dns_entry_t *e = (dns_entry_t*)mm_malloc(sizeof(*e));
    strncpy(e->domain, domain, domain_len);
    strncpy(e->addr, addr, _MIN_OF(TUNNEL_DNS_ADDR_LEN, addr_len));
    e->date = _dns_date();
@@ -175,7 +182,7 @@ _dns_mthrd_func(void *opaque) {
    }
    else {
 
-      dns_entry_t *oe = stm_popf(dns->domain_stm);
+      dns_entry_t *oe = (dns_entry_t*)stm_popf(dns->domain_stm);
       int domain_len = strlen(oe->domain);
 
       if ( _valid_ip_addr(oe->domain, domain_len) ) {
@@ -185,7 +192,7 @@ _dns_mthrd_func(void *opaque) {
          }
       }
       else {
-         dns_entry_t *ne = dict_get(dns->entry_dict, oe->domain, domain_len);
+         dns_entry_t *ne = (dns_entry_t*)dict_get(dns->entry_dict, oe->domain, domain_len);
          if ( !_dns_entry_is_expired(ne) ) {
             strcpy(oe->addr, ne->addr);
             if (oe->cb) {

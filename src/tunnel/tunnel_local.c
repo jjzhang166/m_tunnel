@@ -6,14 +6,21 @@
  */
 
 #define _BSD_SOURCE             /* for daemon */
+#define _CRT_SECURE_NO_WARNINGS
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#include <time.h>
+#else
 #include <unistd.h>
+#include <sys/time.h>
+#endif
 #include <time.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <fcntl.h>
 #include <signal.h>
 
@@ -105,7 +112,7 @@ _local_chann_open(chann_t *r) {
    tun_local_t *tun = _tun_local();
    tun_local_chann_t *c = NULL;
    if (lst_count(tun->free_lst) > 0) {
-      c = lst_popf(tun->free_lst);
+      c = (tun_local_chann_t*)lst_popf(tun->free_lst);
    }
    else {
       c = (tun_local_chann_t*)mm_malloc(sizeof(*c));
@@ -215,7 +222,7 @@ _front_send_remote_data(unsigned char *buf, int buf_len) {
    int data_len = mc_encrypt((char*)&buf[3], buf_len-3, &tbuf[3], tun->key, tun->ti);
    assert(data_len > 0);
 
-   tunnel_cmd_data_len((void*)tbuf, 1, data_len + 3);
+   tunnel_cmd_data_len((unsigned char*)tbuf, 1, data_len + 3);
    return mnet_chann_send(tun->tcpout, tbuf, data_len + 3);
 #endif
 }
@@ -235,7 +242,7 @@ _front_recv_remote_data(buf_t *b) {
    assert(data_len > 0);
 
    memcpy(&buf[3], tbuf, data_len);
-   tunnel_cmd_data_len((void*)buf, 1, data_len + 3);
+   tunnel_cmd_data_len((unsigned char*)buf, 1, data_len + 3);
 
    buf_reset(b);
    buf_forward_ptw(b, data_len + 3);
@@ -657,6 +664,7 @@ _local_sig_timer(int sig) {
    tun->timer_active = 1;
 }
 
+#ifndef _WIN32
 static int
 _local_install_sig_timer() {
    struct itimerval tick;
@@ -675,6 +683,7 @@ _local_install_sig_timer() {
    }
    return 1;
 }
+#endif
 
 static void
 _local_conf_get_values(tunnel_local_config_t *conf, char *argv[]) {
@@ -740,12 +749,14 @@ main(int argc, char *argv[]) {
       return 0;
    }
 
+#ifndef _WIN32
    signal(SIGPIPE, SIG_IGN);
 
    if (_local_install_sig_timer() <= 0) {
       fprintf(stderr, "[local] fail to install sig timer !\n");
       return 0;
    }
+#endif
 
    tunnel_local_config_t conf = {TUNNEL_LOCAL_MODE_INVALID,0,0, "", ""};
 

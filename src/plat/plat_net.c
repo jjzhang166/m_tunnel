@@ -61,7 +61,6 @@
 
 #undef  EWOULDBLOCK
 #define EWOULDBLOCK WSAEWOULDBLOCK
-#define EINPROGRESS WSAEINPROGRESS
 
 #endif  /* _WIN32 */
 
@@ -563,7 +562,7 @@ int mnet_chann_send(chann_t *n, void *buf, int len) {
       rwb_head_t *prh = &n->rwb_send;
 
       if (_rwb_count(prh) > 0) {
-         _rwb_cache(prh, buf, len);
+         _rwb_cache(prh, (char*)buf, len);
       }
       else {
          ret = _chann_send(n, buf, len);

@@ -5,6 +5,8 @@
  * under the terms of the MIT license. See LICENSE for details.
  */
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,7 +65,7 @@ char* misc_read_file(const char* fileName, unsigned long *len) {
          goto fail;
       }
 
-      fcontent = mm_malloc(flength);
+      fcontent = (char*)mm_malloc(flength);
       if (fcontent == NULL) {
          _err("fail to malloc fcontent !\n");
       }

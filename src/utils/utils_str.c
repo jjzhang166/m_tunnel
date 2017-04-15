@@ -6,6 +6,7 @@
  */
 
 #define _GNU_SOURCE
+#define  _CRT_SECURE_NO_WARNINGS
 
 #include <stdio.h>
 #include <stddef.h>

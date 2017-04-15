@@ -5,6 +5,8 @@
  * under the terms of the MIT license. See LICENSE for details.
  */
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -22,7 +24,7 @@ utils_conf_open(const char *conf_file) {
       if (fseek(fp, 0, SEEK_END) == 0) {
 
          long flength = ftell(fp);
-         char *fcontent = mm_malloc(flength);
+         char *fcontent = (char*)mm_malloc(flength);
          
          rewind(fp);
          if (fread(fcontent, flength, 1, fp) > 0) {
@@ -32,14 +34,14 @@ utils_conf_open(const char *conf_file) {
 
             if (h) {
                str_foreach(it, h) {
-                  conf_entry_t *ce = mm_malloc(sizeof(*ce));
+                  conf_entry_t *ce = (conf_entry_t*)mm_malloc(sizeof(*ce));
                   str_t *se = str_split(it, "\t", 0);
                   ce->key = se;
                   ce->value = str_next(se);
                   lst_pushl(lst, ce);
                }
 
-               cf = mm_malloc(sizeof(*cf));
+               cf = (conf_t*)mm_malloc(sizeof(*cf));
                cf->entry_lst = lst;
                cf->opaque_0 = fcontent;
                cf->opaque_1 = h;
@@ -84,7 +86,7 @@ utils_conf_value(conf_t *cf, const char *key) {
    str_t *val = NULL;
    if (cf && key) {
       lst_foreach(it, cf->entry_lst) {
-         conf_entry_t *ce = lst_iter_data(it);
+         conf_entry_t *ce = (conf_entry_t*)lst_iter_data(it);
 
          if (str_cmp(ce->key, key, 0) == 0) {
             val = ce->value;

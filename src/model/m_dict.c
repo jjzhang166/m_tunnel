@@ -5,6 +5,8 @@
  * under the terms of the MIT license. See LICENSE for details.
  */
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <string.h>
 #include <assert.h>
 
@@ -62,7 +64,7 @@ dict_count(dict_t *d) {
 static uint32_t
 _key_hash(const char *name, size_t len) {
    uint32_t h = (uint32_t)len;
-   for (int i=0; i<len; i++) {
+   for (size_t i=0; i<len; i++) {
       h = h ^ ((h<<5)+(h>>2)+(uint32_t)name[i]);
    }
    return h;
@@ -151,7 +153,7 @@ dict_foreach(dict_t *d, dict_enumerate_callback cb, void *opaque) {
    if (d && cb) {
       int stop = 0;
       lst_foreach(it, d->lst) {
-         dict_kv_t *e = lst_iter_data(it);
+         dict_kv_t *e = (dict_kv_t*)lst_iter_data(it);
          cb(opaque, e->key, e->keylen, e->value, &stop);
          if (stop) {
             break;

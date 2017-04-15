@@ -20,11 +20,15 @@ Download precompiled [Release](https://github.com/lalawue/m_tunnel/releases).
 
 # Install & Running
 
+in MacOSX/Linux, just
+
 ```
 # make
 # ./tun_remote.out config/remote_conf.txt # in server
 # ./tun_local.out config/local_conf.txt   # in local
 ```
+
+in Windows, using VS2017 under vc dir.
 
 
 

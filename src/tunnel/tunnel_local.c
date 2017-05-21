@@ -779,7 +779,7 @@ main(int argc, char *argv[]) {
             }
 
             _local_update_ti();
-            mnet_check( -1 );
+            mnet_poll( -1 );
 
             if (tun->timer_active && tun->mode==TUNNEL_LOCAL_MODE_FRONT) {
                tun->timer_active = 0;

@@ -49,7 +49,7 @@ typedef void (*chann_cb)(chann_event_t*);
 int mnet_init(void);
 void mnet_fini(void);
 
-int mnet_check(int microseconds);
+int mnet_poll(int microseconds);
 int mnet_report(int level);
 
 /* channels */

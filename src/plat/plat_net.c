@@ -619,7 +619,7 @@ long long mnet_chann_bytes(chann_t *n, int be_send) {
 }
 
 int
-mnet_check(int microseconds) {
+mnet_poll(int microseconds) {
    int nfds = 0;
    chann_t *n = NULL;
    mnet_t *ss = _gmnet();

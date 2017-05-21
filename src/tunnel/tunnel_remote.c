@@ -781,7 +781,7 @@ main(int argc, char *argv[]) {
             }
 
             _remote_update_ti();
-            mnet_check( -1 );
+            mnet_poll( -1 );
 
 
             /* close inactive client */
